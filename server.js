@@ -243,6 +243,10 @@ app.post('/api/check-payment-status', async (req, res) => {
     }
 });
 
+app.get("/", (req, res) => {
+    res.send("Welcome to the brandstories ");
+  });
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
