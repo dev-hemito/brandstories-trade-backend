@@ -55,7 +55,7 @@ class PhonePeClient {
             merchantUserId: paymentData.email,
             amount: Math.round(paymentData.amount * 100),
             redirectUrl: `${process.env.FRONTEND_URL}`,
-            redirectMode: "POST",
+            redirectMode: "GET",
             callbackUrl: `${process.env.BACKEND_URL}/api/payment-callback`,
             mobileNumber: paymentData.phone,
             paymentInstrument: {
