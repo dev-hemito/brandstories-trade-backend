@@ -12,15 +12,22 @@ app.use(express.json());
 
 // Google Sheets Setup
 async function getSheet() {
-    const serviceAccountAuth = new JWT({
-        email: process.env.GOOGLE_SHEETS_CLIENT_EMAIL,
-        key: process.env.GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n'),
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
+    try {
+        console.log('Initializing Google Sheets connection...');
+        const serviceAccountAuth = new JWT({
+            email: process.env.GOOGLE_SHEETS_CLIENT_EMAIL,
+            key: process.env.GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n'),
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
 
-    const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEETS_SHEET_ID, serviceAccountAuth);
-    await doc.loadInfo();
-    return doc.sheetsByIndex[0];
+        const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEETS_SHEET_ID, serviceAccountAuth);
+        await doc.loadInfo();
+        console.log('Google Sheets connection established successfully');
+        return doc.sheetsByIndex[0];
+    } catch (error) {
+        console.error('Error connecting to Google Sheets:', error);
+        throw error;
+    }
 }
 
 // Email Configuration
@@ -41,21 +48,24 @@ class PhonePeClient {
         this.saltKey = process.env.PHONEPE_SALTKEY;
         this.saltIndex = 1;
         this.apiUrl = process.env.PHONEPE_API_URL;
+        console.log('PhonePe Client initialized');
     }
 
     generateChecksum(payload, apiEndpoint) {
+        console.log('Generating checksum for payment');
         const string = `${Buffer.from(JSON.stringify(payload)).toString('base64')}${apiEndpoint}${this.saltKey}`;
         return `${crypto.createHash('sha256').update(string).digest('hex')}###${this.saltIndex}`;
     }
 
     async initiatePayment(paymentData) {
+        console.log('Initiating PhonePe payment', paymentData);
         const payload = {
             merchantId: this.merchantId,
             merchantTransactionId: paymentData.orderId,
             merchantUserId: paymentData.email,
             amount: Math.round(paymentData.amount * 100),
-            redirectUrl: `${process.env.FRONTEND_URL}`,
-            redirectMode: "GET",
+            redirectUrl: `${process.env.BACKEND_URL}/api/verify`,
+            redirectMode: "POST",
             callbackUrl: `${process.env.BACKEND_URL}/api/payment-callback`,
             mobileNumber: paymentData.phone,
             paymentInstrument: {
@@ -77,7 +87,11 @@ class PhonePeClient {
         });
 
         const data = await response.json();
-        if (!data.success) throw new Error('Payment initialization failed');
+        if (!data.success) {
+            console.error('Payment initialization failed', data);
+            throw new Error('Payment initialization failed');
+        }
+        console.log('Payment initiated successfully', data);
         return data;
     }
 }
@@ -86,6 +100,8 @@ class PhonePeClient {
 app.post('/api/check-registration', async (req, res) => {
     try {
         const { email, phone } = req.body;
+        console.log(`Checking registration for email: ${email}, phone: ${phone}`);
+        
         const sheet = await getSheet();
         const rows = await sheet.getRows();
         
@@ -94,14 +110,17 @@ app.post('/api/check-registration', async (req, res) => {
         );
 
         if (existingUser) {
+            console.log('User already registered', { email, phone });
             return res.status(400).json({
                 error: 'Already registered',
                 message: 'This email or phone number is already registered'
             });
         }
 
+        console.log('Registration check passed', { email, phone });
         res.json({ success: true });
     } catch (error) {
+        console.error('Registration check error', error);
         res.status(500).json({ error: 'Server error', message: error.message });
     }
 });
@@ -110,6 +129,7 @@ app.post('/api/check-registration', async (req, res) => {
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, phone, amount, address, packageType } = req.body;
+        console.log('Registration request received', { name, email, phone, packageType });
         
         const orderId = `ORDER_${Date.now()}`;
         const ticketNumber = `TICKET_${Date.now()}`;
@@ -124,10 +144,18 @@ app.post('/api/register', async (req, res) => {
             timestamp: new Date().toISOString()
         });
 
+        console.log('Pending registration created', { orderId, ticketNumber });
+
         // Initialize payment
         const phonePe = new PhonePeClient();
         const paymentData = { orderId, email, amount, phone };
         const paymentResponse = await phonePe.initiatePayment(paymentData);
+
+        console.log('Payment initialization complete', { 
+            paymentUrl: paymentResponse.data.instrumentResponse.redirectInfo.url, 
+            orderId, 
+            ticketNumber 
+        });
 
         res.json({
             success: true,
@@ -137,6 +165,7 @@ app.post('/api/register', async (req, res) => {
         });
 
     } catch (error) {
+        console.error('Registration failed', error);
         res.status(500).json({ error: 'Registration failed', message: error.message });
     }
 });
@@ -144,54 +173,65 @@ app.post('/api/register', async (req, res) => {
 // Payment Callback
 app.post('/api/payment-callback', async (req, res) => {
     try {
+        console.log("reached payment-callback")
         const { merchantTransactionId, status } = req.body;
+        console.log('Payment callback received', { merchantTransactionId, status });
+
         const registrationData = global.pendingRegistrations.get(merchantTransactionId);
 
         if (!registrationData) {
+            console.error('Registration data not found', { merchantTransactionId });
             return res.status(404).json({ error: 'Registration data not found' });
         }
 
+        // Send email for both success and failure scenarios
+        const emailSubject = status === 'success' 
+            ? 'Registration Successful - Trading Summit'
+            : 'Registration Failed - Trading Summit';
+
+        const emailHtml = status === 'success'
+            ? `
+                <h1>Registration Successful!</h1>
+                <p>Dear ${registrationData.name},</p>
+                <p>Your registration is confirmed.</p>
+                <p>Ticket Number: ${registrationData.ticketNumber}</p>
+                <p>Package: ${registrationData.package}</p>
+            `
+            : `
+                <h1>Registration Failed</h1>
+                <p>Dear ${registrationData.name},</p>
+                <p>Your registration payment was unsuccessful.</p>
+                <p>Please try again or contact support.</p>
+            `;
+
+        // Send email
+        console.log(`Sending ${status} email to ${registrationData.email}`);
+        await transporter.sendMail({
+            from: process.env.SMTP_EMAIL,
+            to: registrationData.email,
+            subject: emailSubject,
+            html: emailHtml
+        });
+        console.log('Email sent successfully');
+
+        // Add to sheet only if payment is successful
         if (status === 'success') {
-            // Add to sheet
             const sheet = await getSheet();
             await sheet.addRow({
                 ...registrationData,
                 paymentStatus: 'Success',
                 orderId: merchantTransactionId
             });
-
-            // Send success email
-            await transporter.sendMail({
-                from: process.env.SMTP_EMAIL,
-                to: registrationData.email,
-                subject: 'Registration Successful - Trading Summit',
-                html: `
-                    <h1>Registration Successful!</h1>
-                    <p>Dear ${registrationData.name},</p>
-                    <p>Your registration is confirmed.</p>
-                    <p>Ticket Number: ${registrationData.ticketNumber}</p>
-                    <p>Package: ${registrationData.package}</p>
-                `
-            });
-        } else {
-            // Send failure email
-            await transporter.sendMail({
-                from: process.env.SMTP_EMAIL,
-                to: registrationData.email,
-                subject: 'Registration Failed - Trading Summit',
-                html: `
-                    <h1>Registration Failed</h1>
-                    <p>Dear ${registrationData.name},</p>
-                    <p>Your registration payment was unsuccessful.</p>
-                    <p>Please try again or contact support.</p>
-                `
-            });
+            console.log('Registration added to Google Sheet');
         }
 
         global.pendingRegistrations.delete(merchantTransactionId);
+        console.log('Pending registration cleaned up');
+        
         res.json({ success: true, status });
 
     } catch (error) {
+        console.error('Callback processing failed', error);
         res.status(500).json({ error: 'Callback processing failed', message: error.message });
     }
 });
@@ -202,7 +242,13 @@ app.listen(PORT, () => {
 });
 
 app.get("/", (req, res) => {
+    console.log('Root endpoint accessed');
     res.send("Welcome to the brandstories ");
-  });
+});
 
-module.exports = app
+app.post("/api/verify", (req, res) => {
+    console.log('Verification endpoint accessed');
+    res.send("You will get a Email shortly. Please hold on ................ ");
+});
+
+module.exports = app;
