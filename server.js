@@ -134,7 +134,7 @@ app.post('/api/check-registration', async (req, res) => {
 // Initialize Payment
 app.post('/api/register', async (req, res) => {
     try {
-        const { name, email, phone, amount, address, packageType } = req.body;
+        const { name, email, phone, amount, packageType } = req.body;
         console.log('Registration request received', { name, email, phone, packageType });
         
         const orderId = `ORDER_${Date.now()}`;
@@ -143,7 +143,7 @@ app.post('/api/register', async (req, res) => {
         // Store registration data
         global.pendingRegistrations = global.pendingRegistrations || new Map();
         global.pendingRegistrations.set(orderId, {
-            name, email, phone, address, 
+            name, email, phone, 
             package: packageType,
             ticketNumber,
             amount,
