@@ -57,6 +57,12 @@ class PhonePeClient {
         return `${crypto.createHash('sha256').update(string).digest('hex')}###${this.saltIndex}`;
     }
 
+    verifyChecksum(incomingChecksum, response) {
+        const string = `${response}${this.saltKey}`;
+        const expectedChecksum = `${crypto.createHash('sha256').update(string).digest('hex')}###${this.saltIndex}`;
+        return incomingChecksum === expectedChecksum;
+    }
+
     async initiatePayment(paymentData) {
         console.log('Initiating PhonePe payment', paymentData);
         const payload = {
@@ -174,11 +180,25 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/payment-callback', async (req, res) => {
     try {
         console.log("Full Callback Request Body:", JSON.stringify(req.body, null, 2));
-        console.log("Callback Headers:", JSON.stringify(req.headers, null, 2));
+        
+        // Decode the base64 response
+        const decodedResponse = JSON.parse(Buffer.from(req.body.response, 'base64').toString('utf-8'));
+        console.log('Decoded Response:', JSON.stringify(decodedResponse, null, 2));
 
-        console.log("reached payment-callback")
-        const { merchantTransactionId, status } = req.body;
+        // Extract transaction details from decoded response
+        const merchantTransactionId = decodedResponse.data.merchantTransactionId;
+        const status = decodedResponse.code === 'PAYMENT_SUCCESS' ? 'success' : 'failed';
+        
         console.log('Payment callback received', { merchantTransactionId, status });
+
+        // Verify checksum (you'll need to implement this method in PhonePeClient)
+        const phonePe = new PhonePeClient();
+        const isChecksumValid = phonePe.verifyChecksum(req.headers['x-verify'], req.body.response);
+        
+        if (!isChecksumValid) {
+            console.error('Checksum verification failed');
+            return res.status(400).json({ error: 'Invalid callback' });
+        }
 
         const registrationData = global.pendingRegistrations.get(merchantTransactionId);
 
@@ -238,6 +258,9 @@ app.post('/api/payment-callback', async (req, res) => {
         res.status(500).json({ error: 'Callback processing failed', message: error.message });
     }
 });
+
+// Add this method to your PhonePeClient class
+
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
