@@ -274,7 +274,73 @@ app.get("/", (req, res) => {
 
 app.post("/api/verify", (req, res) => {
     console.log('Verification endpoint accessed');
-    res.send("You will get a Email shortly. Please hold on ................ ");
+    
+    // Send an HTML response with a custom UI and auto-redirect
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verification in Progress</title>
+        <style>
+            body {
+                font-family: 'Arial', sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                background-color: #f0f2f5;
+                text-align: center;
+            }
+            .verification-container {
+                background-color: white;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                padding: 40px;
+                max-width: 500px;
+                width: 90%;
+            }
+            .spinner {
+                border: 4px solid #f3f3f3;
+                border-top: 4px solid #3498db;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 1s linear infinite;
+                margin: 20px auto;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .message {
+                color: #333;
+                font-size: 18px;
+                margin-bottom: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="verification-container">
+            <div class="spinner"></div>
+            <div class="message">
+                Verification in progress. 
+                <br>You will receive an email shortly.
+                <br>Redirecting to our website...
+            </div>
+        </div>
+        <script>
+            // Redirect to the specified URL after 5 seconds
+            setTimeout(() => {
+                window.location.href = 'https://thebrandstories.co.in';
+            }, 5000);
+        </script>
+    </body>
+    </html>
+    `);
 });
+
 
 module.exports = app;
