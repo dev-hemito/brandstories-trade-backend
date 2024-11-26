@@ -173,6 +173,9 @@ app.post('/api/register', async (req, res) => {
 // Payment Callback
 app.post('/api/payment-callback', async (req, res) => {
     try {
+        console.log("Full Callback Request Body:", JSON.stringify(req.body, null, 2));
+        console.log("Callback Headers:", JSON.stringify(req.headers, null, 2));
+
         console.log("reached payment-callback")
         const { merchantTransactionId, status } = req.body;
         console.log('Payment callback received', { merchantTransactionId, status });
