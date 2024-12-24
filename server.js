@@ -49,13 +49,12 @@ async function getSheetEvolve() {
 }
 
 // Email Configuration
+
 const transporter = nodemailer.createTransport({
-    host: 'smtp.zoho.in',
-    port: 465,
-    secure: true,
+    service: 'gmail',
     auth: {
         user: process.env.SMTP_EMAIL,
-        pass: process.env.SMTP_PASSWORD
+        pass: process.env.SMTP_PASSWORD  // Use App Password, not regular Gmail password
     }
 });
 
