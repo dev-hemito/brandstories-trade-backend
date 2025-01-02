@@ -390,6 +390,7 @@ app.post('/api/payment-callback-evolve', async (req, res) => {
                 <p>Dear ${registrationData.name},</p>
                 <p>Your registration is confirmed.</p>
                 <p>Ticket Number: ${registrationData.ticketNumber}</p>
+                 <p>Order Number: ${registrationData.orderId}</p>
                 <p>Package: ${registrationData.package}</p>
             `
             : `
