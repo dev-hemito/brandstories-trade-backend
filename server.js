@@ -64,9 +64,11 @@ class PhonePeClient {
         this.merchantId = process.env.PHONEPE_MID;
         this.saltKey = process.env.PHONEPE_SALTKEY;
         this.saltIndex = 1;
-        // Ensure the API URL ends without a trailing slash
-        this.apiUrl = process.env.PHONEPE_API_URL ? process.env.PHONEPE_API_URL.replace(/\/$/, '') : '';
-        console.log('PhonePe Client initialized with API URL:', this.apiUrl);
+        // Remove /apis from the base URL if present
+        this.baseUrl = process.env.PHONEPE_API_URL ? 
+            process.env.PHONEPE_API_URL.replace(/\/apis$/, '') : 
+            'https://api.phonepe.com';
+        console.log('PhonePe Client initialized with base URL:', this.baseUrl);
     }
 
     generateChecksum(payload, apiEndpoint) {
@@ -78,18 +80,40 @@ class PhonePeClient {
         return checksum;
     }
 
+    verifyChecksum(receivedChecksum, response) {
+        try {
+            if (!receivedChecksum || !response) {
+                console.error('Missing checksum or response');
+                return false;
+            }
+
+            const [hash, index] = receivedChecksum.split('###');
+            const calculatedHash = crypto
+                .createHash('sha256')
+                .update(response + this.saltKey)
+                .digest('hex');
+
+            const isValid = hash === calculatedHash && index === this.saltIndex.toString();
+            console.log('Checksum verification:', { isValid, receivedHash: hash, calculatedHash });
+            return isValid;
+        } catch (error) {
+            console.error('Checksum verification error:', error);
+            return false;
+        }
+    }
+
     async initiatePayment(paymentData) {
         try {
             console.log('Initiating PhonePe payment with data:', JSON.stringify(paymentData));
             
-            if (!this.merchantId || !this.saltKey || !this.apiUrl) {
+            if (!this.merchantId || !this.saltKey || !this.baseUrl) {
                 throw new Error('Missing required PhonePe configuration');
             }
 
             const payload = {
                 merchantId: this.merchantId,
                 merchantTransactionId: paymentData.orderId,
-                merchantUserId: paymentData.email.replace('@', '_'),
+                merchantUserId: paymentData.email.replace(/[@.]/g, '_'),
                 amount: Math.round(paymentData.amount * 100),
                 redirectUrl: `${process.env.BACKEND_URL}/api/verify`,
                 redirectMode: "POST",
@@ -102,24 +126,16 @@ class PhonePeClient {
 
             console.log('Constructed payload:', JSON.stringify(payload));
             
-            // The API endpoint should be "/pg/v1/pay"
-            const apiEndpoint = "/pg/v1/pay";
+            // The complete API endpoint for payment initiation
+            const apiEndpoint = "/apis/pg/v1/pay";
             const checksum = this.generateChecksum(payload, apiEndpoint);
             
-            // Construct the full URL properly
-            const fullUrl = `${this.apiUrl}${apiEndpoint}`;
+            const fullUrl = `${this.baseUrl}${apiEndpoint}`;
             console.log('Making request to:', fullUrl);
 
             const requestBody = {
                 request: Buffer.from(JSON.stringify(payload)).toString('base64')
             };
-            
-            console.log('Request body:', JSON.stringify(requestBody));
-            console.log('Request headers:', {
-                'Content-Type': 'application/json',
-                'X-VERIFY': checksum,
-                'Accept': 'application/json'
-            });
 
             const response = await fetch(fullUrl, {
                 method: "POST",
@@ -131,12 +147,16 @@ class PhonePeClient {
                 body: JSON.stringify(requestBody)
             });
 
-            console.log('Response status:', response.status);
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('Payment API error:', errorData);
+                throw new Error(`Payment API error: ${response.status} - ${errorData.message || 'Unknown error'}`);
+            }
+
             const data = await response.json();
             console.log('PhonePe API response:', JSON.stringify(data));
 
             if (!data.success) {
-                console.error('Payment initialization failed:', data);
                 throw new Error(`Payment initialization failed: ${data.code} - ${data.message || 'Unknown error'}`);
             }
 
