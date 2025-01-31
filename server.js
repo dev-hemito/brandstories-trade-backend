@@ -29,6 +29,7 @@ async function getSheet() {
         throw error;
     }
 }
+
 async function getSheetEvolve() {
     try {
         console.log('Initializing Google Sheets connection...');
@@ -49,13 +50,12 @@ async function getSheetEvolve() {
 }
 
 // Email Configuration
-
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
         user: process.env.SMTP_EMAIL,
-        pass: process.env.SMTP_PASSWORD  // Use App Password, not regular Gmail password
-    }
+        pass: process.env.SMTP_PASSWORD, // Use App Password, not regular Gmail password
+    },
 });
 
 // PhonePe Payment Gateway
@@ -63,11 +63,8 @@ class PhonePeClient {
     constructor() {
         this.merchantId = process.env.PHONEPE_MID;
         this.saltKey = process.env.PHONEPE_SALTKEY;
-        this.saltIndex = 2;
-        // Remove /apis from the base URL if present
-        this.baseUrl = process.env.PHONEPE_API_URL ? 
-            process.env.PHONEPE_API_URL.replace(/\/apis$/, '') : 
-            'https://api.phonepe.com';
+        this.saltIndex = 2; // Typically, the salt index is 1
+        this.baseUrl = process.env.PHONEPE_API_URL;
         console.log('PhonePe Client initialized with base URL:', this.baseUrl);
     }
 
@@ -105,7 +102,7 @@ class PhonePeClient {
     async initiatePayment(paymentData) {
         try {
             console.log('Initiating PhonePe payment with data:', JSON.stringify(paymentData));
-            
+
             if (!this.merchantId || !this.saltKey || !this.baseUrl) {
                 throw new Error('Missing required PhonePe configuration');
             }
@@ -114,37 +111,36 @@ class PhonePeClient {
                 merchantId: this.merchantId,
                 merchantTransactionId: paymentData.orderId,
                 merchantUserId: paymentData.email.replace(/[@.]/g, '_'),
-                amount: Math.round(paymentData.amount * 100),
+                amount: Math.round(paymentData.amount * 100), // Amount in paise
                 redirectUrl: `${process.env.BACKEND_URL}/api/verify`,
-                redirectMode: "POST",
+                redirectMode: 'POST',
                 callbackUrl: `${process.env.BACKEND_URL}${paymentData.callbackURL}`,
                 mobileNumber: paymentData.phone,
                 paymentInstrument: {
-                    type: "PAY_PAGE"
-                }
+                    type: 'PAY_PAGE',
+                },
             };
 
             console.log('Constructed payload:', JSON.stringify(payload));
-            
-            // The complete API endpoint for payment initiation
-            const apiEndpoint = "/apis/pg/v1/pay";
+
+            const apiEndpoint = '/pg/v1/pay'; // Updated endpoint
             const checksum = this.generateChecksum(payload, apiEndpoint);
-            
+
             const fullUrl = `${this.baseUrl}${apiEndpoint}`;
             console.log('Making request to:', fullUrl);
 
             const requestBody = {
-                request: Buffer.from(JSON.stringify(payload)).toString('base64')
+                request: Buffer.from(JSON.stringify(payload)).toString('base64'),
             };
 
             const response = await fetch(fullUrl, {
-                method: "POST",
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-VERIFY': checksum,
-                    'Accept': 'application/json'
+                    Accept: 'application/json',
                 },
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify(requestBody),
             });
 
             if (!response.ok) {
@@ -173,19 +169,17 @@ app.post('/api/check-registration', async (req, res) => {
     try {
         const { email, phone } = req.body;
         console.log(`Checking registration for email: ${email}, phone: ${phone}`);
-        
+
         const sheet = await getSheet();
         const rows = await sheet.getRows();
-        
-        const existingUser = rows.find(row => 
-            row.get('email') === email || row.get('phone') === phone
-        );
+
+        const existingUser = rows.find((row) => row.get('email') === email || row.get('phone') === phone);
 
         if (existingUser) {
             console.log('User already registered', { email, phone });
             return res.status(400).json({
                 error: 'Already registered',
-                message: 'This email or phone number is already registered'
+                message: 'This email or phone number is already registered',
             });
         }
 
@@ -196,23 +190,22 @@ app.post('/api/check-registration', async (req, res) => {
         res.status(500).json({ error: 'Server error', message: error.message });
     }
 });
+
 app.post('/api/check-registration-evolve', async (req, res) => {
     try {
         const { email, phone } = req.body;
         console.log(`Checking registration for email: ${email}, phone: ${phone}`);
-        
+
         const sheet = await getSheetEvolve();
         const rows = await sheet.getRows();
-        
-        const existingUser = rows.find(row => 
-            row.get('email') === email || row.get('phone') === phone
-        );
+
+        const existingUser = rows.find((row) => row.get('email') === email || row.get('phone') === phone);
 
         if (existingUser) {
             console.log('User already registered', { email, phone });
             return res.status(400).json({
                 error: 'Already registered',
-                message: 'This email or phone number is already registered'
+                message: 'This email or phone number is already registered',
             });
         }
 
@@ -223,93 +216,95 @@ app.post('/api/check-registration-evolve', async (req, res) => {
         res.status(500).json({ error: 'Server error', message: error.message });
     }
 });
-
 
 // Initialize Payment
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, phone, amount, packageType } = req.body;
         console.log('Registration request received', { name, email, phone, packageType });
-        
+
         const orderId = `ORDER_${Date.now()}`;
         const ticketNumber = `TICKET_${Date.now()}`;
 
         // Store registration data
         global.pendingRegistrations = global.pendingRegistrations || new Map();
         global.pendingRegistrations.set(orderId, {
-            name, email, phone, 
+            name,
+            email,
+            phone,
             package: packageType,
             ticketNumber,
             amount,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
         });
 
         console.log('Pending registration created', { orderId, ticketNumber });
 
         // Initialize payment
         const phonePe = new PhonePeClient();
-        const callbackURL = "/api/payment-callback"
+        const callbackURL = '/api/payment-callback';
 
         const paymentData = { orderId, email, amount, phone, callbackURL };
         const paymentResponse = await phonePe.initiatePayment(paymentData);
 
-        console.log('Payment initialization complete', { 
-            paymentUrl: paymentResponse.data.instrumentResponse.redirectInfo.url, 
-            orderId, 
-            ticketNumber 
+        console.log('Payment initialization complete', {
+            paymentUrl: paymentResponse.data.instrumentResponse.redirectInfo.url,
+            orderId,
+            ticketNumber,
         });
 
         res.json({
             success: true,
             paymentUrl: paymentResponse.data.instrumentResponse.redirectInfo.url,
             orderId,
-            ticketNumber
+            ticketNumber,
         });
-
     } catch (error) {
         console.error('Registration failed', error);
         res.status(500).json({ error: 'Registration failed', message: error.message });
     }
 });
+
 app.post('/api/register-evolve', async (req, res) => {
     try {
         const { name, email, phone, amount, packageType } = req.body;
         console.log('Registration request received', { name, email, phone, packageType });
-        
+
         const orderId = `ORDER_${Date.now()}`;
         const ticketNumber = `TICKET_${Date.now()}`;
 
         // Store registration data
         global.pendingRegistrations = global.pendingRegistrations || new Map();
         global.pendingRegistrations.set(orderId, {
-            name, email, phone, 
+            name,
+            email,
+            phone,
             package: packageType,
             ticketNumber,
             amount,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
         });
 
         console.log('Pending registration created', { orderId, ticketNumber });
 
         // Initialize payment
         const phonePe = new PhonePeClient();
-        const callbackURL = "/api/payment-callback-evolve"
+        const callbackURL = '/api/payment-callback-evolve';
         const paymentData = { orderId, email, amount, phone, callbackURL };
         const paymentResponse = await phonePe.initiatePayment(paymentData);
 
-        console.log('Payment initialization complete', { 
-            paymentUrl: paymentResponse.data.instrumentResponse.redirectInfo.url, 
-            orderId, 
-            ticketNumber 
+        console.log('Payment initialization complete', {
+            paymentUrl: paymentResponse.data.instrumentResponse.redirectInfo.url,
+            orderId,
+            ticketNumber,
         });
 
         res.json({
             success: true,
             paymentUrl: paymentResponse.data.instrumentResponse.redirectInfo.url,
             orderId,
-            ticketNumber
+            ticketNumber,
         });
-
     } catch (error) {
         console.error('Registration failed', error);
         res.status(500).json({ error: 'Registration failed', message: error.message });
@@ -319,8 +314,8 @@ app.post('/api/register-evolve', async (req, res) => {
 // Payment Callback
 app.post('/api/payment-callback', async (req, res) => {
     try {
-        console.log("Full Callback Request Body:", JSON.stringify(req.body, null, 2));
-        
+        console.log('Full Callback Request Body:', JSON.stringify(req.body, null, 2));
+
         // Decode the base64 response
         const decodedResponse = JSON.parse(Buffer.from(req.body.response, 'base64').toString('utf-8'));
         console.log('Decoded Response:', JSON.stringify(decodedResponse, null, 2));
@@ -328,13 +323,13 @@ app.post('/api/payment-callback', async (req, res) => {
         // Extract transaction details from decoded response
         const merchantTransactionId = decodedResponse.data.merchantTransactionId;
         const status = decodedResponse.code === 'PAYMENT_SUCCESS' ? 'success' : 'failed';
-        
+
         console.log('Payment callback received', { merchantTransactionId, status });
 
-        // Verify checksum (you'll need to implement this method in PhonePeClient)
+        // Verify checksum
         const phonePe = new PhonePeClient();
         const isChecksumValid = phonePe.verifyChecksum(req.headers['x-verify'], req.body.response);
-        
+
         if (!isChecksumValid) {
             console.error('Checksum verification failed');
             return res.status(400).json({ error: 'Invalid callback' });
@@ -348,24 +343,26 @@ app.post('/api/payment-callback', async (req, res) => {
         }
 
         // Send email for both success and failure scenarios
-        const emailSubject = status === 'success' 
-            ? 'Registration Successful - Trading Summit'
-            : 'Registration Failed - Trading Summit';
+        const emailSubject =
+            status === 'success'
+                ? 'Registration Successful - Trading Summit'
+                : 'Registration Failed - Trading Summit';
 
-        const emailHtml = status === 'success'
-            ? `
-                <h1>Registration Successful!</h1>
-                <p>Dear ${registrationData.name},</p>
-                <p>Your registration is confirmed.</p>
-                <p>Ticket Number: ${registrationData.ticketNumber}</p>
-                <p>Package: ${registrationData.package}</p>
-            `
-            : `
-                <h1>Registration Failed</h1>
-                <p>Dear ${registrationData.name},</p>
-                <p>Your registration payment was unsuccessful.</p>
-                <p>Please try again or contact support.</p>
-            `;
+        const emailHtml =
+            status === 'success'
+                ? `
+                    <h1>Registration Successful!</h1>
+                    <p>Dear ${registrationData.name},</p>
+                    <p>Your registration is confirmed.</p>
+                    <p>Ticket Number: ${registrationData.ticketNumber}</p>
+                    <p>Package: ${registrationData.package}</p>
+                `
+                : `
+                    <h1>Registration Failed</h1>
+                    <p>Dear ${registrationData.name},</p>
+                    <p>Your registration payment was unsuccessful.</p>
+                    <p>Please try again or contact support.</p>
+                `;
 
         // Send email
         console.log(`Sending ${status} email to ${registrationData.email}`);
@@ -373,7 +370,7 @@ app.post('/api/payment-callback', async (req, res) => {
             from: process.env.SMTP_EMAIL,
             to: registrationData.email,
             subject: emailSubject,
-            html: emailHtml
+            html: emailHtml,
         });
         console.log('Email sent successfully');
 
@@ -383,25 +380,25 @@ app.post('/api/payment-callback', async (req, res) => {
             await sheet.addRow({
                 ...registrationData,
                 paymentStatus: 'Success',
-                orderId: merchantTransactionId
+                orderId: merchantTransactionId,
             });
             console.log('Registration added to Google Sheet');
         }
 
         global.pendingRegistrations.delete(merchantTransactionId);
         console.log('Pending registration cleaned up');
-        
-        res.json({ success: true, status });
 
+        res.json({ success: true, status });
     } catch (error) {
         console.error('Callback processing failed', error);
         res.status(500).json({ error: 'Callback processing failed', message: error.message });
     }
 });
+
 app.post('/api/payment-callback-evolve', async (req, res) => {
     try {
-        console.log("Full Callback Request Body:", JSON.stringify(req.body, null, 2));
-        
+        console.log('Full Callback Request Body:', JSON.stringify(req.body, null, 2));
+
         // Decode the base64 response
         const decodedResponse = JSON.parse(Buffer.from(req.body.response, 'base64').toString('utf-8'));
         console.log('Decoded Response:', JSON.stringify(decodedResponse, null, 2));
@@ -409,13 +406,13 @@ app.post('/api/payment-callback-evolve', async (req, res) => {
         // Extract transaction details from decoded response
         const merchantTransactionId = decodedResponse.data.merchantTransactionId;
         const status = decodedResponse.code === 'PAYMENT_SUCCESS' ? 'success' : 'failed';
-        
+
         console.log('Payment callback received', { merchantTransactionId, status });
 
-        // Verify checksum (you'll need to implement this method in PhonePeClient)
+        // Verify checksum
         const phonePe = new PhonePeClient();
         const isChecksumValid = phonePe.verifyChecksum(req.headers['x-verify'], req.body.response);
-        
+
         if (!isChecksumValid) {
             console.error('Checksum verification failed');
             return res.status(400).json({ error: 'Invalid callback' });
@@ -429,25 +426,27 @@ app.post('/api/payment-callback-evolve', async (req, res) => {
         }
 
         // Send email for both success and failure scenarios
-        const emailSubject = status === 'success' 
-            ? 'Registration Successful - Evolve 2025'
-            : 'Registration Failed - Evolve 2025';
+        const emailSubject =
+            status === 'success'
+                ? 'Registration Successful - Evolve 2025'
+                : 'Registration Failed - Evolve 2025';
 
-        const emailHtml = status === 'success'
-            ? `
-                <h1>Registration Successful!</h1>
-                <p>Dear ${registrationData.name},</p>
-                <p>Your registration is confirmed.</p>
-                <p>Ticket Number: ${registrationData.ticketNumber}</p>
-                 <p>Order Number: ${registrationData.orderId}</p>
-                <p>Package: ${registrationData.package}</p>
-            `
-            : `
-                <h1>Registration Failed</h1>
-                <p>Dear ${registrationData.name},</p>
-                <p>Your registration payment was unsuccessful.</p>
-                <p>Please try again or contact support.</p>
-            `;
+        const emailHtml =
+            status === 'success'
+                ? `
+                    <h1>Registration Successful!</h1>
+                    <p>Dear ${registrationData.name},</p>
+                    <p>Your registration is confirmed.</p>
+                    <p>Ticket Number: ${registrationData.ticketNumber}</p>
+                    <p>Order Number: ${registrationData.orderId}</p>
+                    <p>Package: ${registrationData.package}</p>
+                `
+                : `
+                    <h1>Registration Failed</h1>
+                    <p>Dear ${registrationData.name},</p>
+                    <p>Your registration payment was unsuccessful.</p>
+                    <p>Please try again or contact support.</p>
+                `;
 
         // Send email
         console.log(`Sending ${status} email to ${registrationData.email}`);
@@ -455,7 +454,7 @@ app.post('/api/payment-callback-evolve', async (req, res) => {
             from: process.env.SMTP_EMAIL,
             to: registrationData.email,
             subject: emailSubject,
-            html: emailHtml
+            html: emailHtml,
         });
         console.log('Email sent successfully');
 
@@ -465,34 +464,28 @@ app.post('/api/payment-callback-evolve', async (req, res) => {
             await sheet.addRow({
                 ...registrationData,
                 paymentStatus: 'Success',
-                orderId: merchantTransactionId
+                orderId: merchantTransactionId,
             });
             console.log('Registration added to Google Sheet');
         }
 
         global.pendingRegistrations.delete(merchantTransactionId);
         console.log('Pending registration cleaned up');
-        
-        res.json({ success: true, status });
 
+        res.json({ success: true, status });
     } catch (error) {
         console.error('Callback processing failed', error);
         res.status(500).json({ error: 'Callback processing failed', message: error.message });
     }
 });
 
-// Add this method to your PhonePeClient class
-
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
-
-app.get("/", (req, res) => {
+// Root Endpoint
+app.get('/', (req, res) => {
     console.log('Root endpoint accessed');
-    res.send("Welcome to the brandstories ");
+    res.send('Welcome to the brandstories backend');
 });
+
+// Verification Endpoint
 
 app.post("/api/verify", (req, res) => {
     console.log('Verification endpoint accessed');
