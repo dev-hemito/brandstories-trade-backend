@@ -64,58 +64,107 @@ class PhonePeClient {
         this.merchantId = process.env.PHONEPE_MID;
         this.saltKey = process.env.PHONEPE_SALTKEY;
         this.saltIndex = 2;
-        this.apiUrl = process.env.PHONEPE_API_URL;
-        console.log('PhonePe Client initialized');
+        // Remove /apis from the base URL if present
+        this.baseUrl = process.env.PHONEPE_API_URL ? 
+            process.env.PHONEPE_API_URL.replace(/\/apis$/, '') : 
+            'https://api.phonepe.com';
+        console.log('PhonePe Client initialized with base URL:', this.baseUrl);
     }
 
     generateChecksum(payload, apiEndpoint) {
-        console.log('Generating checksum for payment');
-        const string = `${Buffer.from(JSON.stringify(payload)).toString('base64')}${apiEndpoint}${this.saltKey}`;
-        return `${crypto.createHash('sha256').update(string).digest('hex')}###${this.saltIndex}`;
+        console.log('Generating checksum with payload:', JSON.stringify(payload));
+        const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
+        const string = `${base64Payload}${apiEndpoint}${this.saltKey}`;
+        const checksum = `${crypto.createHash('sha256').update(string).digest('hex')}###${this.saltIndex}`;
+        console.log('Generated checksum:', checksum);
+        return checksum;
     }
 
-    verifyChecksum(incomingChecksum, response) {
-        const string = `${response}${this.saltKey}`;
-        const expectedChecksum = `${crypto.createHash('sha256').update(string).digest('hex')}###${this.saltIndex}`;
-        return incomingChecksum === expectedChecksum;
+    verifyChecksum(receivedChecksum, response) {
+        try {
+            if (!receivedChecksum || !response) {
+                console.error('Missing checksum or response');
+                return false;
+            }
+
+            const [hash, index] = receivedChecksum.split('###');
+            const calculatedHash = crypto
+                .createHash('sha256')
+                .update(response + this.saltKey)
+                .digest('hex');
+
+            const isValid = hash === calculatedHash && index === this.saltIndex.toString();
+            console.log('Checksum verification:', { isValid, receivedHash: hash, calculatedHash });
+            return isValid;
+        } catch (error) {
+            console.error('Checksum verification error:', error);
+            return false;
+        }
     }
 
     async initiatePayment(paymentData) {
-        console.log('Initiating PhonePe payment', paymentData);
-        const payload = {
-            merchantId: this.merchantId,
-            merchantTransactionId: paymentData.orderId,
-            merchantUserId: paymentData.email,
-            amount: Math.round(paymentData.amount * 100),
-            redirectUrl: `${process.env.BACKEND_URL}/api/verify`,
-            redirectMode: "POST",
-            callbackUrl:  `${process.env.BACKEND_URL}${paymentData.callbackURL}`,
-            mobileNumber: paymentData.phone,
-            paymentInstrument: {
-                type: "PAY_PAGE"
+        try {
+            console.log('Initiating PhonePe payment with data:', JSON.stringify(paymentData));
+            
+            if (!this.merchantId || !this.saltKey || !this.baseUrl) {
+                throw new Error('Missing required PhonePe configuration');
             }
-        };
 
-        const checksum = this.generateChecksum(payload, "/pg/v1/pay");
-        
-        const response = await fetch(`${this.apiUrl}/pay`, {
-            method: "POST",
-            headers: {
-                'Content-Type': 'application/json',
-                'X-VERIFY': checksum
-            },
-            body: JSON.stringify({
+            const payload = {
+                merchantId: this.merchantId,
+                merchantTransactionId: paymentData.orderId,
+                merchantUserId: paymentData.email.replace(/[@.]/g, '_'),
+                amount: Math.round(paymentData.amount * 100),
+                redirectUrl: `${process.env.BACKEND_URL}/api/verify`,
+                redirectMode: "POST",
+                callbackUrl: `${process.env.BACKEND_URL}${paymentData.callbackURL}`,
+                mobileNumber: paymentData.phone,
+                paymentInstrument: {
+                    type: "PAY_PAGE"
+                }
+            };
+
+            console.log('Constructed payload:', JSON.stringify(payload));
+            
+            // The complete API endpoint for payment initiation
+            const apiEndpoint = "/apis/pg/v1/pay";
+            const checksum = this.generateChecksum(payload, apiEndpoint);
+            
+            const fullUrl = `${this.baseUrl}${apiEndpoint}`;
+            console.log('Making request to:', fullUrl);
+
+            const requestBody = {
                 request: Buffer.from(JSON.stringify(payload)).toString('base64')
-            })
-        });
+            };
 
-        const data = await response.json();
-        if (!data.success) {
-            console.error('Payment initialization failed', data);
-            throw new Error('Payment initialization failed');
+            const response = await fetch(fullUrl, {
+                method: "POST",
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-VERIFY': checksum,
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('Payment API error:', errorData);
+                throw new Error(`Payment API error: ${response.status} - ${errorData.message || 'Unknown error'}`);
+            }
+
+            const data = await response.json();
+            console.log('PhonePe API response:', JSON.stringify(data));
+
+            if (!data.success) {
+                throw new Error(`Payment initialization failed: ${data.code} - ${data.message || 'Unknown error'}`);
+            }
+
+            return data;
+        } catch (error) {
+            console.error('Error in initiatePayment:', error);
+            throw error;
         }
-        console.log('Payment initiated successfully', data);
-        return data;
     }
 }
 
