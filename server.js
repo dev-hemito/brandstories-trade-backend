@@ -63,7 +63,7 @@ class PhonePeClient {
     constructor() {
         this.merchantId = process.env.PHONEPE_MID;
         this.saltKey = process.env.PHONEPE_SALTKEY;
-        this.saltIndex = 1;
+        this.saltIndex = 2;
         this.apiUrl = process.env.PHONEPE_API_URL;
         console.log('PhonePe Client initialized');
     }
