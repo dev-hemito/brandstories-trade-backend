@@ -64,8 +64,9 @@ class PhonePeClient {
         this.merchantId = process.env.PHONEPE_MID;
         this.saltKey = process.env.PHONEPE_SALTKEY;
         this.saltIndex = 1;
-        this.apiUrl = process.env.PHONEPE_API_URL;
-        console.log('PhonePe Client initialized with merchantId:', this.merchantId);
+        // Ensure the API URL ends without a trailing slash
+        this.apiUrl = process.env.PHONEPE_API_URL ? process.env.PHONEPE_API_URL.replace(/\/$/, '') : '';
+        console.log('PhonePe Client initialized with API URL:', this.apiUrl);
     }
 
     generateChecksum(payload, apiEndpoint) {
@@ -88,8 +89,8 @@ class PhonePeClient {
             const payload = {
                 merchantId: this.merchantId,
                 merchantTransactionId: paymentData.orderId,
-                merchantUserId: paymentData.email.replace('@', '_'),  // Ensure valid merchantUserId
-                amount: Math.round(paymentData.amount * 100),  // Convert to paisa
+                merchantUserId: paymentData.email.replace('@', '_'),
+                amount: Math.round(paymentData.amount * 100),
                 redirectUrl: `${process.env.BACKEND_URL}/api/verify`,
                 redirectMode: "POST",
                 callbackUrl: `${process.env.BACKEND_URL}${paymentData.callbackURL}`,
@@ -100,20 +101,37 @@ class PhonePeClient {
             };
 
             console.log('Constructed payload:', JSON.stringify(payload));
-            const checksum = this.generateChecksum(payload, "/pg/v1/pay");
             
-            const response = await fetch(`${this.apiUrl}/pay`, {
+            // The API endpoint should be "/pg/v1/pay"
+            const apiEndpoint = "/pg/v1/pay";
+            const checksum = this.generateChecksum(payload, apiEndpoint);
+            
+            // Construct the full URL properly
+            const fullUrl = `${this.apiUrl}${apiEndpoint}`;
+            console.log('Making request to:', fullUrl);
+
+            const requestBody = {
+                request: Buffer.from(JSON.stringify(payload)).toString('base64')
+            };
+            
+            console.log('Request body:', JSON.stringify(requestBody));
+            console.log('Request headers:', {
+                'Content-Type': 'application/json',
+                'X-VERIFY': checksum,
+                'Accept': 'application/json'
+            });
+
+            const response = await fetch(fullUrl, {
                 method: "POST",
                 headers: {
                     'Content-Type': 'application/json',
                     'X-VERIFY': checksum,
                     'Accept': 'application/json'
                 },
-                body: JSON.stringify({
-                    request: Buffer.from(JSON.stringify(payload)).toString('base64')
-                })
+                body: JSON.stringify(requestBody)
             });
 
+            console.log('Response status:', response.status);
             const data = await response.json();
             console.log('PhonePe API response:', JSON.stringify(data));
 
@@ -129,7 +147,6 @@ class PhonePeClient {
         }
     }
 }
-
 // Check Registration Endpoint
 app.post('/api/check-registration', async (req, res) => {
     try {
